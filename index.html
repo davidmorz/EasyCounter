@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Counter</title>
+    <!-- Carga de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Fuente Inter para un look moderno -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Default colors (Material You - Indigo) */
+            --primary-color: #4f46e5; /* Indigo-600 */
+            --primary-light: #6366f1; /* Indigo-500 */
+            --background-dark: #1f2937; /* Gray-800 */
+            --text-dark: #f9fafb; /* Gray-50 */
+            --surface-dark: #374151; /* Gray-700 */
+        }
+        .light-mode {
+            --background-dark: #f3f4f6; /* Gray-100 */
+            --text-dark: #111827; /* Gray-900 */
+            --surface-dark: #ffffff; /* White */
+        }
+
+        body {
+            background-color: var(--background-dark);
+            color: var(--text-dark);
+            transition: background-color 0.3s, color 0.3s;
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Styles for the main button with subtle shadow */
+        .primary-button {
+            background-color: var(--primary-color);
+            transition: transform 0.1s ease, background-color 0.3s;
+        }
+        .primary-button:active {
+            transform: scale(0.98);
+        }
+
+        /* Material You style for modals */
+        .modal-content {
+            background-color: var(--surface-dark);
+        }
+
+        /* For the counter number */
+        #countDisplay {
+            color: var(--primary-color);
+            font-size: 15vw; /* Responsive size */
+            font-weight: 900;
+            line-height: 1;
+            text-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Styles for circular buttons (FAB-like) */
+        .circular-button {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        /* For the top menu chips (w-10 h-10 on mobile) */
+        .top-chip {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px; /* Adjusted padding for icon */
+            border-radius: 9999px;
+            background-color: var(--surface-dark);
+            color: var(--text-dark);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        @media (min-width: 640px) {
+            .top-chip {
+                width: auto;
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+        }
+
+        /* Hide native color input, only show the styled color circle */
+        #colorPicker {
+            visibility: hidden;
+            width: 0;
+            height: 0;
+            position: absolute;
+        }
+        .color-picker-wrapper {
+            cursor: pointer;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            border: 4px solid var(--surface-dark);
+            box-shadow: 0 0 0 2px var(--primary-color);
+            transition: box-shadow 0.3s;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col transition-colors duration-300">
+
+    <!-- Firebase Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // Importamos signInWithCustomToken para manejar la autenticación de la plataforma
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, runTransaction, onSnapshot, collection, query, orderBy, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Variables Globales
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-daily-counter';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        // Obtenemos el token de autenticación si está disponible
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
+
+        let app, db, auth, userId = null;
+        let unsubscribeDaily = null;
+        let isAuthReady = false; 
+        let currentLanguage = 'en'; // English by default
+
+        // Definiciones de texto para internacionalización
+        const i18n = {
+            en: {
+                title: 'Daily Counter',
+                connecting: 'Connecting to database...',
+                errorAuth: 'Authentication error. Please reload.',
+                history: 'History',
+                settings: 'Settings',
+                tapToCount: 'Tap the number to count',
+                historyTitle: 'Daily History',
+                historyLoading: 'Loading records...',
+                historyEmpty: 'No records for previous days.',
+                historyError: 'Error loading data: ',
+                close: 'Close',
+                settingsTitle: 'Interface Settings',
+                modeLabel: 'Display Mode',
+                modeDark: '🌙 Dark Mode',
+                modeLight: '🌞 Light Mode',
+                colorLabel: 'Primary Color',
+                languageLabel: 'Language',
+                languageEng: 'English',
+                languageEsp: 'Español',
+            },
+            es: {
+                title: 'Contador Diario',
+                connecting: 'Conectando con la base de datos...',
+                errorAuth: 'Error de Autenticación. Recargue.',
+                history: 'Historial',
+                settings: 'Ajustes',
+                tapToCount: 'Toca el número para contar',
+                historyTitle: 'Historial Diario',
+                historyLoading: 'Cargando registros...',
+                historyEmpty: 'No hay registros de días anteriores.',
+                historyError: 'Error al cargar datos: ',
+                close: 'Cerrar',
+                settingsTitle: 'Ajustes de Interfaz',
+                modeLabel: 'Modo de Visualización',
+                modeDark: '🌙 Modo Oscuro',
+                modeLight: '🌞 Modo Claro',
+                colorLabel: 'Color Principal',
+                languageLabel: 'Idioma',
+                languageEng: 'English',
+                languageEsp: 'Español',
+            }
+        };
+
+        // Elementos del DOM (se obtienen en window.onload)
+        let countDisplay, countDateChip, historyButton, settingsButton, historyModal, settingsModal, 
+            historyList, themeToggle, colorPicker, colorPickerWrapper, bodyElement, authMessage, 
+            languageSelector, appTitle, historyButtonText, settingsButtonText, tapToCountText, 
+            modalHistoryTitle, modalHistoryClose, modalSettingsTitle, modeLabel, colorLabel, 
+            languageLabel, modalSettingsClose;
+        
+        function getDOMElements() {
+            countDisplay = document.getElementById('countDisplay');
+            countDateChip = document.getElementById('countDateChip');
+            historyButton = document.getElementById('historyButton');
+            settingsButton = document.getElementById('settingsButton');
+            historyModal = document.getElementById('historyModal');
+            settingsModal = document.getElementById('settingsModal');
+            historyList = document.getElementById('historyList');
+            themeToggle = document.getElementById('themeToggle');
+            colorPicker = document.getElementById('colorPicker');
+            colorPickerWrapper = document.getElementById('colorPickerWrapper');
+            bodyElement = document.body;
+            authMessage = document.getElementById('authMessage');
+            languageSelector = document.getElementById('languageSelector');
+            appTitle = document.getElementById('appTitle');
+            historyButtonText = document.getElementById('historyButtonText');
+            settingsButtonText = document.getElementById('settingsButtonText');
+            tapToCountText = document.getElementById('tapToCountText');
+            modalHistoryTitle = document.getElementById('modalHistoryTitle');
+            modalHistoryClose = document.getElementById('closeHistory');
+            modalSettingsTitle = document.getElementById('modalSettingsTitle');
+            modeLabel = document.getElementById('modeLabel');
+            colorLabel = document.getElementById('colorLabel');
+            languageLabel = document.getElementById('languageLabel');
+            modalSettingsClose = document.getElementById('modalSettingsClose');
+        }
+
+        /**
+         * Actualiza todos los textos de la interfaz según el idioma actual.
+         */
+        function updateUIforLanguage() {
+            const t = i18n[currentLanguage];
+            document.title = t.title;
+            appTitle.textContent = t.title;
+            historyButtonText.textContent = t.history;
+            settingsButtonText.textContent = t.settings;
+            tapToCountText.textContent = t.tapToCount;
+            modalHistoryTitle.textContent = t.historyTitle;
+            modalHistoryClose.textContent = t.close;
+            modalSettingsTitle.textContent = t.settingsTitle;
+            modeLabel.textContent = t.modeLabel;
+            colorLabel.textContent = t.colorLabel;
+            languageLabel.textContent = t.languageLabel;
+            modalSettingsClose.textContent = t.close;
+            authMessage.textContent = t.connecting; 
+            updateThemeToggleButtonText();
+        }
+
+        /**
+         * Obtiene la fecha de hoy en formato YYYY-MM-DD.
+         */
+        function getTodayDate() {
+            const now = new Date();
+            return now.toISOString().split('T')[0];
+        }
+
+        function getTodayDocRef() {
+            if (!db || !userId) return null;
+            const today = getTodayDate();
+            // Ruta: /artifacts/{appId}/users/{userId}/daily_clicks/{date_id}
+            const path = `/artifacts/${appId}/users/${userId}/daily_clicks`;
+            return doc(db, path, today);
+        }
+
+        // --- GESTIÓN DE ESTADO Y FIREBASE ---
+
+        // Función auxiliar para el inicio de sesión anónimo
+        function tryAnonymousSignIn(authInstance) {
+            signInAnonymously(authInstance).catch(error => {
+                console.error("Anonymous authentication failed:", error);
+                handleUI(false);
+                authMessage.textContent = i18n[currentLanguage].errorAuth;
+            });
+        }
+
+        function initializeFirebase() {
+            try {
+                if (!firebaseConfig) {
+                    authMessage.textContent = i18n[currentLanguage].errorAuth;
+                    return;
+                }
+                
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                console.log("Firebase initialized.");
+
+                // 1. Manejar el cambio de estado de autenticación
+                onAuthStateChanged(auth, (user) => {
+                    isAuthReady = true; 
+                    if (user) {
+                        userId = user.uid;
+                        console.log(`User authenticated. ID: ${userId}`);
+                        startDailyTracking();
+                        handleUI(true);
+                    } else {
+                        // Si el usuario no está autenticado después de un intento, 
+                        // el UI de error ya fue manejado por las cláusulas catch.
+                        console.log("User is signed out or waiting for authentication.");
+                    }
+                });
+
+                // 2. Intentar autenticación inicial
+                if (initialAuthToken) {
+                    console.log("Attempting sign-in with custom token...");
+                    // Usar el token personalizado si está disponible
+                    signInWithCustomToken(auth, initialAuthToken).catch(error => {
+                        console.error("Custom token sign-in failed, falling back to anonymous:", error);
+                        tryAnonymousSignIn(auth); // Fallback a anónimo si falla el token
+                    });
+                } else {
+                    console.log("No custom token found, signing in anonymously...");
+                    // Usar inicio de sesión anónimo como opción por defecto
+                    tryAnonymousSignIn(auth);
+                }
+
+            } catch (e) {
+                console.error("Error initializing Firebase:", e);
+                handleUI(false);
+                authMessage.textContent = i18n[currentLanguage].errorAuth;
+            }
+        }
+
+        function handleUI(isAuthenticated) {
+            if (isAuthenticated && isAuthReady) {
+                document.getElementById('mainCounterView').classList.remove('hidden');
+                document.getElementById('authSection').classList.add('hidden');
+            } else {
+                document.getElementById('mainCounterView').classList.add('hidden');
+                document.getElementById('authSection').classList.remove('hidden');
+            }
+        }
+
+        // --- SEGUIMIENTO DIARIO (DAILY TRACKING) ---
+
+        function startDailyTracking() {
+            if (!userId) return; 
+
+            const todayRef = getTodayDocRef();
+            if (!todayRef) return;
+
+            countDateChip.textContent = getTodayDate();
+
+            if (unsubscribeDaily) unsubscribeDaily();
+
+            // Suscribirse a cambios en el documento de hoy (Tiempo Real)
+            unsubscribeDaily = onSnapshot(todayRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const count = data.count || 0;
+                    const locale = currentLanguage === 'es' ? 'es-ES' : 'en-US';
+                    countDisplay.textContent = count.toLocaleString(locale);
+                    document.getElementById('decrementButton').disabled = count <= 0;
+                } else {
+                    countDisplay.textContent = '0';
+                    document.getElementById('decrementButton').disabled = true;
+                }
+            }, (error) => {
+                console.error("Daily onSnapshot error:", error);
+            });
+        }
+
+        async function updateCount(delta) {
+            if (!userId || !isAuthReady) {
+                console.error("System not ready or user not authenticated.");
+                return;
+            }
+            const todayRef = getTodayDocRef();
+            if (!todayRef) return;
+
+            try {
+                await runTransaction(db, async (transaction) => {
+                    const docSnap = await transaction.get(todayRef);
+
+                    if (!docSnap.exists()) {
+                        if (delta > 0) {
+                            transaction.set(todayRef, { count: delta, createdAt: Date.now() });
+                        }
+                    } else {
+                        const newCount = (docSnap.data().count || 0) + delta;
+                        if (newCount >= 0) {
+                            transaction.update(todayRef, { count: newCount });
+                        } else {
+                            throw "Cannot decrement below zero.";
+                        }
+                    }
+                });
+            } catch (e) {
+                if (e !== "Cannot decrement below zero.") {
+                    console.error("Transaction failed:", e);
+                }
+            }
+        }
+
+        // --- HISTORIAL ---
+
+        async function showHistory() {
+            if (!userId || !isAuthReady) {
+                historyList.innerHTML = `<li class="text-center py-4 text-red-400">${i18n[currentLanguage].errorAuth}</li>`;
+                historyModal.classList.remove('hidden');
+                return;
+            }
+
+            historyList.innerHTML = `<li class="text-center py-4 text-gray-400">${i18n[currentLanguage].historyLoading}</li>`;
+            historyModal.classList.remove('hidden');
+
+            try {
+                const path = `/artifacts/${appId}/users/${userId}/daily_clicks`;
+                const clicksColRef = collection(db, path);
+                // NOTA: Usamos getDocs directamente sin onSnapshot aquí ya que es un historial estático
+                const q = query(clicksColRef, orderBy("createdAt", "desc")); 
+                const querySnapshot = await getDocs(q);
+
+                const locale = currentLanguage === 'es' ? 'es-ES' : 'en-US';
+                let historyHtml = '';
+                const today = getTodayDate();
+                
+                querySnapshot.forEach(doc => {
+                    const data = doc.data();
+                    const date = doc.id; 
+                    const count = data.count || 0;
+
+                    if (date !== today && count > 0) {
+                        historyHtml += `
+                            <li class="flex justify-between items-center p-3 my-2 rounded-xl" style="background-color: var(--surface-dark);">
+                                <span class="text-sm font-medium text-gray-400">${date}</span>
+                                <span class="text-2xl font-bold" style="color: var(--primary-color);">${count.toLocaleString(locale)}</span>
+                            </li>
+                        `;
+                    }
+                });
+
+                if (historyHtml === '') {
+                     historyList.innerHTML = `<li class="text-center py-4 text-gray-400">${i18n[currentLanguage].historyEmpty}</li>`;
+                } else {
+                    historyList.innerHTML = historyHtml;
+                }
+
+            } catch (e) {
+                console.error("Error loading history:", e);
+                historyList.innerHTML = `<li class="text-center py-4 text-red-400">${i18n[currentLanguage].historyError} ${e.message}</li>`;
+            }
+        }
+
+        // --- CONFIGURACIÓN DE UI/ESTILO (INCLUYENDO IDIOMA) ---
+
+        function loadSettings() {
+            const savedColor = localStorage.getItem('primaryColor') || '#4f46e5';
+            const savedMode = localStorage.getItem('darkMode') || 'false';
+            const savedLang = localStorage.getItem('language') || 'en';
+
+            // 1. Cargar Idioma
+            currentLanguage = savedLang;
+            languageSelector.value = savedLang;
+            updateUIforLanguage();
+            
+            // 2. Cargar Color
+            setPrimaryColor(savedColor);
+            colorPicker.value = savedColor;
+            colorPickerWrapper.style.backgroundColor = savedColor;
+
+            // 3. Cargar Tema
+            toggleDarkMode(savedMode === 'true', false);
+        }
+        
+        function setPrimaryColor(color) {
+            document.documentElement.style.setProperty('--primary-color', color);
+            colorPickerWrapper.style.boxShadow = `0 0 0 4px var(--surface-dark), 0 0 0 6px ${color}`;
+            localStorage.setItem('primaryColor', color);
+        }
+
+        function updateThemeToggleButtonText() {
+            const isCurrentlyDark = !bodyElement.classList.contains('light-mode');
+            themeToggle.innerHTML = isCurrentlyDark ? i18n[currentLanguage].modeLight : i18n[currentLanguage].modeDark;
+        }
+
+        function toggleDarkMode(isDark, save = true) {
+            if (isDark) {
+                bodyElement.classList.remove('light-mode');
+            } else {
+                bodyElement.classList.add('light-mode');
+            }
+            updateThemeToggleButtonText();
+            if (save) {
+                localStorage.setItem('darkMode', !isDark); // Guarda 'false' si está en dark mode, 'true' si está en light mode para el toggle
+            }
+        }
+
+        function setLanguage(langCode) {
+            currentLanguage = langCode;
+            localStorage.setItem('language', langCode);
+            updateUIforLanguage();
+            // Forzar recarga del contador para actualizar formato de número
+            if (userId) startDailyTracking(); 
+        }
+
+        // --- LISTENERS DE EVENTOS ---
+
+        function setupEventListeners() {
+            document.getElementById('incrementButton').addEventListener('click', () => updateCount(1));
+            document.getElementById('decrementButton').addEventListener('click', () => updateCount(-1));
+            document.getElementById('countDisplay').addEventListener('click', () => updateCount(1));
+
+            // Listeners de Modales
+            historyButton.addEventListener('click', showHistory);
+            settingsButton.addEventListener('click', () => settingsModal.classList.remove('hidden'));
+            document.getElementById('closeHistory').addEventListener('click', () => historyModal.classList.add('hidden'));
+            modalSettingsClose.addEventListener('click', () => settingsModal.classList.add('hidden'));
+
+            // Listeners de Ajustes
+            themeToggle.addEventListener('click', () => {
+                const isCurrentlyDark = !bodyElement.classList.contains('light-mode');
+                toggleDarkMode(!isCurrentlyDark);
+            });
+
+            colorPickerWrapper.addEventListener('click', () => colorPicker.click());
+            colorPicker.addEventListener('change', (e) => {
+                const newColor = e.target.value;
+                setPrimaryColor(newColor);
+                colorPickerWrapper.style.backgroundColor = newColor;
+            });
+
+            languageSelector.addEventListener('change', (e) => {
+                setLanguage(e.target.value);
+            });
+        }
+
+
+        // Inicio al cargar la página
+        window.onload = () => {
+            getDOMElements(); // 1. Obtener todos los elementos del DOM
+            loadSettings();   // 2. Cargar ajustes de idioma, color y tema
+            setupEventListeners(); // 3. Configurar listeners de eventos
+            initializeFirebase(); // 4. Inicializar Firebase y autenticación
+        };
+
+    </script>
+
+    <!-- UI Principal -->
+    <div id="mainCounterView" class="hidden flex flex-col flex-grow items-center justify-center p-4">
+
+        <!-- Barra Superior (Chips de Acción) -->
+        <div class="fixed top-0 left-0 right-0 p-4 flex justify-between z-10">
+            <!-- Fecha y Título -->
+            <div id="countDateChip" class="top-chip px-4 text-sm font-medium transition-colors duration-300">
+                Loading...
+            </div>
+
+            <div class="flex space-x-2">
+                <!-- Botón de Historial -->
+                <button id="historyButton" class="top-chip transition-colors duration-300 hover:opacity-80 flex items-center justify-center sm:w-auto sm:px-4">
+                    <span class="sm:hidden text-lg">📜</span>
+                    <span id="historyButtonText" class="hidden sm:inline">History</span>
+                </button>
+
+                <!-- Botón de Ajustes -->
+                <button id="settingsButton" class="top-chip transition-colors duration-300 hover:opacity-80 flex items-center justify-center sm:w-auto sm:px-4">
+                    <span class="sm:hidden text-lg">⚙️</span>
+                    <span id="settingsButtonText" class="hidden sm:inline">Settings</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Área Principal del Contador -->
+        <div id="countDisplayArea" class="flex flex-col items-center justify-center flex-grow w-full">
+            <div id="countDisplay" class="cursor-pointer select-none" role="button" aria-label="Tap to increment">0</div>
+            <p id="tapToCountText" class="text-sm font-semibold text-gray-400">Tap the number to count</p>
+        </div>
+
+        <!-- Controles de Incremento/Decremento (Botones Material You) -->
+        <div class="flex justify-center items-end p-4 pb-12 space-x-6 w-full max-w-sm">
+            <!-- Botón de Decremento (-1) -->
+            <button id="decrementButton" disabled
+                class="circular-button bg-gray-500 text-white rounded-full transition-all duration-200 opacity-50 disabled:opacity-30"
+                aria-label="Decrement counter by 1">
+                −
+            </button>
+
+            <!-- Botón de Incremento (+1) - Grande y Prominente -->
+            <button id="incrementButton"
+                class="circular-button text-white rounded-full shadow-lg primary-button"
+                style="background-color: var(--primary-color); width: 100px; height: 100px; font-size: 3rem;"
+                aria-label="Increment counter by 1">
+                +
+            </button>
+        </div>
+    </div>
+
+
+    <!-- Sección de Autenticación (Mensaje de carga, visible al inicio) -->
+    <div id="authSection" class="fixed inset-0 flex flex-col items-center justify-center p-6 bg-gray-900 z-50">
+        <h1 id="appTitle" class="text-3xl font-bold mb-4 text-white">Daily Counter</h1>
+        <p id="authMessage" class="text-gray-400 text-center">Connecting to database...</p>
+    </div>
+
+    <!-- Modal de Historial -->
+    <div id="historyModal" class="fixed inset-0 bg-black bg-opacity-70 hidden z-50 flex items-center justify-center p-4">
+        <div class="modal-content w-full max-w-md rounded-3xl p-6 shadow-2xl transition-all duration-300">
+            <h2 id="modalHistoryTitle" class="text-2xl font-bold mb-4" style="color: var(--primary-color);">Daily History</h2>
+            <ul id="historyList" class="max-h-80 overflow-y-auto space-y-2">
+                <!-- Los elementos del historial se insertan aquí -->
+            </ul>
+            <button id="closeHistory" class="mt-6 w-full py-3 rounded-xl text-white font-semibold transition-colors duration-300" style="background-color: var(--primary-color);">
+                Close
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal de Ajustes -->
+    <div id="settingsModal" class="fixed inset-0 bg-black bg-opacity-70 hidden z-50 flex items-center justify-center p-4">
+        <div class="modal-content w-full max-w-md rounded-3xl p-6 shadow-2xl transition-all duration-300">
+            <h2 id="modalSettingsTitle" class="text-2xl font-bold mb-6" style="color: var(--primary-color);">Interface Settings</h2>
+
+            <div class="space-y-6">
+                 <!-- Selector de Idioma -->
+                <div class="flex justify-between items-center pb-4 border-b border-gray-600 transition-colors duration-300">
+                    <label id="languageLabel" class="text-lg font-medium">Language</label>
+                    <select id="languageSelector" class="px-3 py-2 rounded-xl text-white font-semibold transition-colors duration-300" style="background-color: var(--primary-color);">
+                        <option value="en">English</option>
+                        <option value="es">Español</option>
+                    </select>
+                </div>
+
+                <!-- Selector de Tema (Modo Oscuro/Claro) -->
+                <div class="flex justify-between items-center pb-4 border-b border-gray-600 transition-colors duration-300">
+                    <label id="modeLabel" class="text-lg font-medium">Display Mode</label>
+                    <button id="themeToggle" class="px-4 py-2 rounded-xl text-white font-semibold transition-colors duration-300" style="background-color: var(--primary-color);">
+                        🌙 Dark Mode
+                    </button>
+                </div>
+
+                <!-- Selector de Color -->
+                <div class="flex justify-between items-center pb-4">
+                    <label id="colorLabel" for="colorPicker" class="text-lg font-medium">Primary Color</label>
+                    <div class="relative">
+                        <!-- Círculo de estilo que se pulsa -->
+                        <div id="colorPickerWrapper" class="color-picker-wrapper" style="background-color: #4f46e5;"></div>
+                        <!-- Input de color nativo oculto -->
+                        <input type="color" id="colorPicker">
+                    </div>
+                </div>
+            </div>
+
+            <button id="modalSettingsClose" class="mt-8 w-full py-3 rounded-xl text-white font-semibold transition-colors duration-300" style="background-color: var(--primary-color);">
+                Close
+            </button>
+        </div>
+    </div>
+
+</body>
+</html>
