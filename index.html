@@ -112,12 +112,15 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         // Importamos signInWithCustomToken para manejar la autenticación de la plataforma
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, runTransaction, onSnapshot, collection, query, orderBy, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, runTransaction, onSnapshot, collection, query, orderBy, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Activamos los logs para mejor depuración en el navegador
+        setLogLevel('Debug');
 
         // Variables Globales
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-daily-counter';
+        // Usamos valores por defecto seguros para evitar errores cuando se ejecuta fuera de Canvas
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'github-daily-counter';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        // Obtenemos el token de autenticación si está disponible
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
 
         let app, db, auth, userId = null;
@@ -237,7 +240,7 @@
         function getTodayDocRef() {
             if (!db || !userId) return null;
             const today = getTodayDate();
-            // Ruta: /artifacts/{appId}/users/{userId}/daily_clicks/{date_id}
+            // Ruta de datos privada: /artifacts/{appId}/users/{userId}/daily_clicks/{date_id}
             const path = `/artifacts/${appId}/users/${userId}/daily_clicks`;
             return doc(db, path, today);
         }
@@ -255,9 +258,14 @@
 
         function initializeFirebase() {
             try {
+                // Si NO hay configuración de Firebase, asumimos que estamos en un entorno publicado
+                // (como GitHub Pages) que no proporciona las credenciales de Canvas.
                 if (!firebaseConfig) {
-                    authMessage.textContent = i18n[currentLanguage].errorAuth;
-                    return;
+                    console.error("Firebase config is missing. Cannot initialize Firebase.");
+                    handleUI(false);
+                    // Esto evita el error de autenticación, pero el contador no funcionará sin una base de datos real.
+                    authMessage.textContent = "Database connection missing. Counter is NOT functional."; 
+                    return; 
                 }
                 
                 app = initializeApp(firebaseConfig);
@@ -274,23 +282,22 @@
                         startDailyTracking();
                         handleUI(true);
                     } else {
-                        // Si el usuario no está autenticado después de un intento, 
-                        // el UI de error ya fue manejado por las cláusulas catch.
+                        // Si el usuario no está autenticado después de un intento
                         console.log("User is signed out or waiting for authentication.");
                     }
                 });
 
                 // 2. Intentar autenticación inicial
                 if (initialAuthToken) {
-                    console.log("Attempting sign-in with custom token...");
-                    // Usar el token personalizado si está disponible
+                    console.log("Attempting sign-in with custom token (Canvas environment)...");
+                    // Usar el token personalizado si está disponible (entorno Canvas)
                     signInWithCustomToken(auth, initialAuthToken).catch(error => {
                         console.error("Custom token sign-in failed, falling back to anonymous:", error);
                         tryAnonymousSignIn(auth); // Fallback a anónimo si falla el token
                     });
                 } else {
-                    console.log("No custom token found, signing in anonymously...");
-                    // Usar inicio de sesión anónimo como opción por defecto
+                    console.log("No custom token found, signing in anonymously (Published environment)...");
+                    // Usar inicio de sesión anónimo como opción por defecto (entorno publicado)
                     tryAnonymousSignIn(auth);
                 }
 
@@ -387,7 +394,10 @@
             try {
                 const path = `/artifacts/${appId}/users/${userId}/daily_clicks`;
                 const clicksColRef = collection(db, path);
-                // NOTA: Usamos getDocs directamente sin onSnapshot aquí ya que es un historial estático
+                
+                // NOTA IMPORTANTE: Si la colección es muy grande, esta consulta podría fallar sin un índice.
+                // Como es una colección pequeña por usuario, la mantendremos así por ahora.
+                // Si fallara en el futuro, se debe quitar el orderBy y ordenar en memoria.
                 const q = query(clicksColRef, orderBy("createdAt", "desc")); 
                 const querySnapshot = await getDocs(q);
 
@@ -570,18 +580,18 @@
     <!-- Sección de Autenticación (Mensaje de carga, visible al inicio) -->
     <div id="authSection" class="fixed inset-0 flex flex-col items-center justify-center p-6 bg-gray-900 z-50">
         <h1 id="appTitle" class="text-3xl font-bold mb-4 text-white">Daily Counter</h1>
-        <p id="authMessage" class="text-gray-400 text-center">Connecting to database...</p>
+        <p id="authMessage" class="text-gray-400 text-center">Conectando con la base de datos...</p>
     </div>
 
     <!-- Modal de Historial -->
     <div id="historyModal" class="fixed inset-0 bg-black bg-opacity-70 hidden z-50 flex items-center justify-center p-4">
         <div class="modal-content w-full max-w-md rounded-3xl p-6 shadow-2xl transition-all duration-300">
-            <h2 id="modalHistoryTitle" class="text-2xl font-bold mb-4" style="color: var(--primary-color);">Daily History</h2>
+            <h2 id="modalHistoryTitle" class="text-2xl font-bold mb-4" style="color: var(--primary-color);">Historial Diario</h2>
             <ul id="historyList" class="max-h-80 overflow-y-auto space-y-2">
                 <!-- Los elementos del historial se insertan aquí -->
             </ul>
             <button id="closeHistory" class="mt-6 w-full py-3 rounded-xl text-white font-semibold transition-colors duration-300" style="background-color: var(--primary-color);">
-                Close
+                Cerrar
             </button>
         </div>
     </div>
@@ -589,12 +599,12 @@
     <!-- Modal de Ajustes -->
     <div id="settingsModal" class="fixed inset-0 bg-black bg-opacity-70 hidden z-50 flex items-center justify-center p-4">
         <div class="modal-content w-full max-w-md rounded-3xl p-6 shadow-2xl transition-all duration-300">
-            <h2 id="modalSettingsTitle" class="text-2xl font-bold mb-6" style="color: var(--primary-color);">Interface Settings</h2>
+            <h2 id="modalSettingsTitle" class="text-2xl font-bold mb-6" style="color: var(--primary-color);">Ajustes de Interfaz</h2>
 
             <div class="space-y-6">
                  <!-- Selector de Idioma -->
                 <div class="flex justify-between items-center pb-4 border-b border-gray-600 transition-colors duration-300">
-                    <label id="languageLabel" class="text-lg font-medium">Language</label>
+                    <label id="languageLabel" class="text-lg font-medium">Idioma</label>
                     <select id="languageSelector" class="px-3 py-2 rounded-xl text-white font-semibold transition-colors duration-300" style="background-color: var(--primary-color);">
                         <option value="en">English</option>
                         <option value="es">Español</option>
@@ -603,15 +613,15 @@
 
                 <!-- Selector de Tema (Modo Oscuro/Claro) -->
                 <div class="flex justify-between items-center pb-4 border-b border-gray-600 transition-colors duration-300">
-                    <label id="modeLabel" class="text-lg font-medium">Display Mode</label>
+                    <label id="modeLabel" class="text-lg font-medium">Modo de Visualización</label>
                     <button id="themeToggle" class="px-4 py-2 rounded-xl text-white font-semibold transition-colors duration-300" style="background-color: var(--primary-color);">
-                        🌙 Dark Mode
+                        🌙 Modo Oscuro
                     </button>
                 </div>
 
                 <!-- Selector de Color -->
                 <div class="flex justify-between items-center pb-4">
-                    <label id="colorLabel" for="colorPicker" class="text-lg font-medium">Primary Color</label>
+                    <label id="colorLabel" for="colorPicker" class="text-lg font-medium">Color Principal</label>
                     <div class="relative">
                         <!-- Círculo de estilo que se pulsa -->
                         <div id="colorPickerWrapper" class="color-picker-wrapper" style="background-color: #4f46e5;"></div>
@@ -622,7 +632,7 @@
             </div>
 
             <button id="modalSettingsClose" class="mt-8 w-full py-3 rounded-xl text-white font-semibold transition-colors duration-300" style="background-color: var(--primary-color);">
-                Close
+                Cerrar
             </button>
         </div>
     </div>
